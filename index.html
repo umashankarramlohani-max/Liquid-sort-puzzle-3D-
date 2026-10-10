@@ -1,0 +1,642 @@
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import {
+  ArrowLeft,
+  Menu,
+  RotateCcw,
+  Lightbulb,
+  Undo2,
+  Plus,
+  Compass,
+  Star,
+  Lock,
+  Check,
+  Calendar,
+  ShoppingBag,
+  Gift,
+  Search,
+  X,
+  Trophy,
+  Sparkles,
+  ArrowRight,
+  Grid,
+} from 'lucide-react';
+import confetti from 'canvas-confetti';
+
+/* ==========================================================================
+   1. TYPES & INTERFACES
+   ========================================================================== */
+
+export type ColorId =
+  | 'red'
+  | 'orange'
+  | 'yellow'
+  | 'lime'
+  | 'green'
+  | 'teal'
+  | 'cyan'
+  | 'blue'
+  | 'indigo'
+  | 'purple'
+  | 'pink'
+  | 'rose'
+  | 'amber'
+  | 'slate';
+
+export interface ColorDef {
+  id: ColorId;
+  name: string;
+  primary: string;
+  light: string;
+  dark: string;
+  glow: string;
+}
+
+export type BottleShape = 'cylinder' | 'flask' | 'potion' | 'square';
+export type GameTheme = 'lab' | 'cyber' | 'pastel' | 'alchemy' | 'lagoon';
+export type ScreenMode = 'LEVEL_SELECT' | 'GAMEPLAY';
+
+export interface LevelData {
+  levelNumber: number;
+  tubes: ColorId[][];
+  capacity: number;
+  minMoves: number;
+  parMoves: number;
+}
+
+export interface LevelProgress {
+  levelNumber: number;
+  completed: boolean;
+  stars: number;
+  bestMoves: number;
+  bestTimeSeconds: number;
+}
+
+export interface MoveRecord {
+  fromIndex: number;
+  toIndex: number;
+  color: ColorId;
+  count: number;
+  tubesSnapshot: ColorId[][];
+}
+
+export interface SolverHint {
+  fromIndex: number;
+  toIndex: number;
+  color: ColorId;
+  count: number;
+  reason?: string;
+}
+
+/* ==========================================================================
+   2. COLORS & THEME CONFIGURATION
+   ========================================================================== */
+
+export const LIQUID_COLORS: Record<ColorId, ColorDef> = {
+  red: { id: 'red', name: 'Ruby Crimson', primary: '#ef4444', light: '#f87171', dark: '#991b1b', glow: 'rgba(239, 68, 68, 0.5)' },
+  orange: { id: 'orange', name: 'Tangerine', primary: '#f97316', light: '#fb923c', dark: '#9a3412', glow: 'rgba(249, 115, 22, 0.5)' },
+  yellow: { id: 'yellow', name: 'Solar Gold', primary: '#eab308', light: '#fde047', dark: '#854d0e', glow: 'rgba(234, 179, 8, 0.5)' },
+  lime: { id: 'lime', name: 'Toxic Lime', primary: '#84cc16', light: '#a3e635', dark: '#3f6212', glow: 'rgba(132, 204, 22, 0.5)' },
+  green: { id: 'green', name: 'Emerald Jade', primary: '#10b981', light: '#34d399', dark: '#065f46', glow: 'rgba(16, 185, 129, 0.5)' },
+  teal: { id: 'teal', name: 'Deep Lagoon', primary: '#14b8a6', light: '#2dd4bf', dark: '#115e59', glow: 'rgba(20, 184, 166, 0.5)' },
+  cyan: { id: 'cyan', name: 'Electric Cyan', primary: '#06b6d4', light: '#22d3ee', dark: '#155e75', glow: 'rgba(6, 182, 212, 0.5)' },
+  blue: { id: 'blue', name: 'Cobalt Ocean', primary: '#3b82f6', light: '#60a5fa', dark: '#1e40af', glow: 'rgba(59, 130, 246, 0.5)' },
+  indigo: { id: 'indigo', name: 'Nebula Indigo', primary: '#6366f1', light: '#818cf8', dark: '#3730a3', glow: 'rgba(99, 102, 241, 0.5)' },
+  purple: { id: 'purple', name: 'Amethyst Violet', primary: '#8b5cf6', light: '#a78bfa', dark: '#5b21b6', glow: 'rgba(139, 92, 246, 0.5)' },
+  pink: { id: 'pink', name: 'Bubblegum Magenta', primary: '#ec4899', light: '#f472b6', dark: '#9d174d', glow: 'rgba(236, 72, 153, 0.5)' },
+  rose: { id: 'rose', name: 'Velvet Rose', primary: '#f43f5e', light: '#fb7185', dark: '#9f1239', glow: 'rgba(244, 63, 94, 0.5)' },
+  amber: { id: 'amber', name: 'Warm Amber', primary: '#d97706', light: '#fbbf24', dark: '#78350f', glow: 'rgba(217, 119, 6, 0.5)' },
+  slate: { id: 'slate', name: 'Quicksilver', primary: '#64748b', light: '#94a3b8', dark: '#1e293b', glow: 'rgba(100, 116, 139, 0.5)' },
+};
+
+export const ALL_COLOR_IDS: ColorId[] = Object.keys(LIQUID_COLORS) as ColorId[];
+
+export interface ThemeConfig {
+  id: GameTheme;
+  name: string;
+  description: string;
+  bgGradient: string;
+  tableSurface: string;
+  tableBorder: string;
+  accent: string;
+  glassTint: string;
+  glassHighlight: string;
+}
+
+export const THEMES: Record<GameTheme, ThemeConfig> = {
+  lab: {
+    id: 'lab',
+    name: 'Zen Laboratory',
+    description: 'Clean brushed steel, deep laboratory slate, and crystal clarity',
+    bgGradient: 'radial-gradient(ellipse at 50% 20%, #1e293b 0%, #0f172a 60%, #020617 100%)',
+    tableSurface: 'linear-gradient(180deg, rgba(30, 41, 59, 0.85) 0%, rgba(15, 23, 42, 0.95) 100%)',
+    tableBorder: 'rgba(148, 163, 184, 0.15)',
+    accent: '#38bdf8',
+    glassTint: 'rgba(255, 255, 255, 0.08)',
+    glassHighlight: 'rgba(255, 255, 255, 0.35)',
+  },
+  cyber: {
+    id: 'cyber',
+    name: 'Cyber Neon',
+    description: 'Dark synth-wave grid with radiant fluorescent fluid glow',
+    bgGradient: 'radial-gradient(ellipse at 50% 20%, #1e1035 0%, #0c081e 65%, #05020c 100%)',
+    tableSurface: 'linear-gradient(180deg, rgba(35, 18, 60, 0.85) 0%, rgba(14, 8, 30, 0.95) 100%)',
+    tableBorder: 'rgba(168, 85, 247, 0.3)',
+    accent: '#c084fc',
+    glassTint: 'rgba(216, 180, 254, 0.12)',
+    glassHighlight: 'rgba(243, 232, 255, 0.5)',
+  },
+  alchemy: {
+    id: 'alchemy',
+    name: 'Mystic Alchemy',
+    description: 'Ancient stone sanctum illuminated by warm magical elixirs',
+    bgGradient: 'radial-gradient(ellipse at 50% 20%, #2e1e12 0%, #191008 65%, #090502 100%)',
+    tableSurface: 'linear-gradient(180deg, rgba(50, 32, 20, 0.85) 0%, rgba(22, 14, 8, 0.95) 100%)',
+    tableBorder: 'rgba(217, 119, 6, 0.25)',
+    accent: '#f59e0b',
+    glassTint: 'rgba(254, 243, 199, 0.09)',
+    glassHighlight: 'rgba(240, 253, 250, 0.45)',
+  },
+  pastel: {
+    id: 'pastel',
+    name: 'Dreamy Pastel',
+    description: 'Soft twilight gradients with gentle translucent glasswork',
+    bgGradient: 'radial-gradient(ellipse at 50% 20%, #1e1b4b 0%, #0f172a 70%, #030712 100%)',
+    tableSurface: 'linear-gradient(180deg, rgba(30, 27, 75, 0.85) 0%, rgba(15, 23, 42, 0.95) 100%)',
+    tableBorder: 'rgba(192, 132, 252, 0.2)',
+    accent: '#f472b6',
+    glassTint: 'rgba(255, 255, 255, 0.12)',
+    glassHighlight: 'rgba(255, 255, 255, 0.45)',
+  },
+  lagoon: {
+    id: 'lagoon',
+    name: 'Ocean Lagoon',
+    description: 'Deep oceanic trench with iridescent bioluminescent caustics',
+    bgGradient: 'radial-gradient(ellipse at 50% 20%, #0c2d3e 0%, #061c28 65%, #020c12 100%)',
+    tableSurface: 'linear-gradient(180deg, rgba(12, 45, 62, 0.85) 0%, rgba(5, 24, 34, 0.95) 100%)',
+    tableBorder: 'rgba(45, 212, 191, 0.25)',
+    accent: '#2dd4bf',
+    glassTint: 'rgba(204, 251, 241, 0.1)',
+    glassHighlight: 'rgba(240, 253, 250, 0.4)',
+  },
+};
+
+/* ==========================================================================
+   3. WEB AUDIO SYNTHESIZER
+   ========================================================================== */
+
+class SoundEngine {
+  private ctx: AudioContext | null = null;
+  private isMuted: boolean = false;
+  private volume: number = 0.7;
+
+  private initCtx() {
+    if (!this.ctx) {
+      const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      this.ctx = new AudioCtx();
+    }
+    if (this.ctx.state === 'suspended') {
+      this.ctx.resume();
+    }
+    return this.ctx;
+  }
+
+  public setMuted(muted: boolean) {
+    this.isMuted = muted;
+  }
+
+  public playSelect(pitchShift: number = 1.0) {
+    if (this.isMuted) return;
+    try {
+      const ctx = this.initCtx();
+      const now = ctx.currentTime;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(880 * pitchShift, now);
+      osc.frequency.exponentialRampToValueAtTime(1760 * pitchShift, now + 0.04);
+      osc.frequency.exponentialRampToValueAtTime(1320 * pitchShift, now + 0.12);
+
+      gain.gain.setValueAtTime(this.volume * 0.28, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.16);
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.16);
+    } catch {}
+  }
+
+  public playDeselect() {
+    if (this.isMuted) return;
+    try {
+      const ctx = this.initCtx();
+      const now = ctx.currentTime;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(440, now);
+      osc.frequency.exponentialRampToValueAtTime(220, now + 0.08);
+
+      gain.gain.setValueAtTime(this.volume * 0.15, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.09);
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.09);
+    } catch {}
+  }
+
+  public playPour(duration: number = 0.5, targetLevel: number = 2) {
+    if (this.isMuted) return;
+    try {
+      const ctx = this.initCtx();
+      const now = ctx.currentTime;
+      const bufferSize = ctx.sampleRate * duration;
+      const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < bufferSize; i++) {
+        data[i] = Math.random() * 2 - 1;
+      }
+
+      const noise = ctx.createBufferSource();
+      noise.buffer = buffer;
+
+      const filter = ctx.createBiquadFilter();
+      filter.type = 'bandpass';
+      const baseFreq = 450 + targetLevel * 180;
+      filter.frequency.setValueAtTime(baseFreq, now);
+      filter.frequency.exponentialRampToValueAtTime(baseFreq + 280, now + duration);
+      filter.Q.setValueAtTime(4.5, now);
+
+      const gain = ctx.createGain();
+      gain.gain.setValueAtTime(0.01, now);
+      gain.gain.linearRampToValueAtTime(this.volume * 0.22, now + 0.08);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + duration);
+
+      noise.connect(filter);
+      filter.connect(gain);
+      gain.connect(ctx.destination);
+
+      noise.start(now);
+      noise.stop(now + duration);
+    } catch {}
+  }
+
+  public playBottleComplete() {
+    if (this.isMuted) return;
+    try {
+      const ctx = this.initCtx();
+      const now = ctx.currentTime;
+      const popOsc = ctx.createOscillator();
+      const popGain = ctx.createGain();
+
+      popOsc.type = 'sine';
+      popOsc.frequency.setValueAtTime(280, now);
+      popOsc.frequency.exponentialRampToValueAtTime(140, now + 0.04);
+      popGain.gain.setValueAtTime(this.volume * 0.45, now);
+      popGain.gain.exponentialRampToValueAtTime(0.001, now + 0.05);
+
+      popOsc.connect(popGain);
+      popGain.connect(ctx.destination);
+      popOsc.start(now);
+      popOsc.stop(now + 0.05);
+
+      const notes = [587.33, 739.99, 880.0, 1174.66];
+      notes.forEach((freq, idx) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        const noteTime = now + 0.03 + idx * 0.06;
+
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(freq, noteTime);
+        gain.gain.setValueAtTime(this.volume * 0.22, noteTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, noteTime + 0.35);
+
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(noteTime);
+        osc.stop(noteTime + 0.35);
+      });
+    } catch {}
+  }
+
+  public playVictory() {
+    if (this.isMuted) return;
+    try {
+      const ctx = this.initCtx();
+      const now = ctx.currentTime;
+      const chord = [523.25, 659.25, 783.99, 987.77, 1046.5];
+      chord.forEach((freq, idx) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        const startTime = now + idx * 0.09;
+
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(freq, startTime);
+        gain.gain.setValueAtTime(this.volume * 0.25, startTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, startTime + 0.7);
+
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(startTime);
+        osc.stop(startTime + 0.7);
+      });
+    } catch {}
+  }
+
+  public playInvalid() {
+    if (this.isMuted) return;
+    try {
+      const ctx = this.initCtx();
+      const now = ctx.currentTime;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(150, now);
+      osc.frequency.exponentialRampToValueAtTime(90, now + 0.09);
+      gain.gain.setValueAtTime(this.volume * 0.16, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.1);
+    } catch {}
+  }
+
+  public playUndo() {
+    if (this.isMuted) return;
+    try {
+      const ctx = this.initCtx();
+      const now = ctx.currentTime;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(600, now);
+      osc.frequency.exponentialRampToValueAtTime(250, now + 0.15);
+      gain.gain.setValueAtTime(this.volume * 0.2, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.16);
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.16);
+    } catch {}
+  }
+
+  public playExtraTube() {
+    if (this.isMuted) return;
+    try {
+      const ctx = this.initCtx();
+      const now = ctx.currentTime;
+      const notes = [440, 554.37, 659.25, 880];
+      notes.forEach((freq, idx) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        const t = now + idx * 0.08;
+
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(freq, t);
+        gain.gain.setValueAtTime(this.volume * 0.25, t);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.4);
+
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(t);
+        osc.stop(t + 0.4);
+      });
+    } catch {}
+  }
+}
+
+export const soundEngine = new SoundEngine();
+
+/* ==========================================================================
+   4. LOCAL STORAGE & ECONOMY HELPER
+   ========================================================================== */
+
+const STORAGE_KEYS = {
+  CURRENT_LEVEL: 'liquid_sort_3d_current_level',
+  HIGHEST_UNLOCKED: 'liquid_sort_3d_highest_unlocked',
+  LEVEL_PROGRESS: 'liquid_sort_3d_progress',
+  THEME: 'liquid_sort_3d_theme',
+  BOTTLE_SHAPE: 'liquid_sort_3d_bottle_shape',
+  SOUND_MUTED: 'liquid_sort_3d_muted',
+  TOTAL_POURS: 'liquid_sort_3d_total_pours',
+  COINS: 'liquid_sort_3d_coins',
+  GEMS: 'liquid_sort_3d_gems',
+  UNLOCKED_ITEMS: 'liquid_sort_3d_unlocked_items',
+};
+
+export function loadStoredProgress(): Record<number, LevelProgress> {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.LEVEL_PROGRESS);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+export function saveLevelProgress(level: number, moves: number, timeSec: number, stars: number) {
+  try {
+    const progress = loadStoredProgress();
+    const existing = progress[level];
+
+    progress[level] = {
+      levelNumber: level,
+      completed: true,
+      stars: existing ? Math.max(existing.stars, stars) : stars,
+      bestMoves: existing ? Math.min(existing.bestMoves, moves) : moves,
+      bestTimeSeconds: existing && existing.bestTimeSeconds > 0 ? Math.min(existing.bestTimeSeconds, timeSec) : timeSec,
+    };
+
+    localStorage.setItem(STORAGE_KEYS.LEVEL_PROGRESS, JSON.stringify(progress));
+
+    const currentHighest = getHighestUnlocked();
+    if (level >= currentHighest && level < 500) {
+      localStorage.setItem(STORAGE_KEYS.HIGHEST_UNLOCKED, String(level + 1));
+    }
+  } catch {}
+}
+
+export function getCurrentLevel(): number {
+  try {
+    const val = localStorage.getItem(STORAGE_KEYS.CURRENT_LEVEL);
+    const parsed = val ? parseInt(val, 10) : 1;
+    return isNaN(parsed) || parsed < 1 ? 1 : Math.min(500, parsed);
+  } catch {
+    return 1;
+  }
+}
+
+export function setCurrentLevel(level: number): void {
+  try {
+    localStorage.setItem(STORAGE_KEYS.CURRENT_LEVEL, String(Math.max(1, Math.min(500, level))));
+  } catch {}
+}
+
+export function getHighestUnlocked(): number {
+  try {
+    const val = localStorage.getItem(STORAGE_KEYS.HIGHEST_UNLOCKED);
+    const parsed = val ? parseInt(val, 10) : 1;
+    return isNaN(parsed) || parsed < 1 ? 1 : Math.min(500, parsed);
+  } catch {
+    return 1;
+  }
+}
+
+export function getPlayerTheme(): GameTheme {
+  try {
+    const val = localStorage.getItem(STORAGE_KEYS.THEME) as GameTheme;
+    return val && ['lab', 'cyber', 'pastel', 'alchemy', 'lagoon'].includes(val) ? val : 'lab';
+  } catch {
+    return 'lab';
+  }
+}
+
+export function setPlayerTheme(theme: GameTheme): void {
+  try {
+    localStorage.setItem(STORAGE_KEYS.THEME, theme);
+  } catch {}
+}
+
+export function getBottleShape(): BottleShape {
+  try {
+    const val = localStorage.getItem(STORAGE_KEYS.BOTTLE_SHAPE) as BottleShape;
+    return val && ['cylinder', 'flask', 'potion', 'square'].includes(val) ? val : 'cylinder';
+  } catch {
+    return 'cylinder';
+  }
+}
+
+export function setBottleShape(shape: BottleShape): void {
+  try {
+    localStorage.setItem(STORAGE_KEYS.BOTTLE_SHAPE, shape);
+  } catch {}
+}
+
+export function getSoundSettings(): { muted: boolean } {
+  try {
+    return { muted: localStorage.getItem(STORAGE_KEYS.SOUND_MUTED) === 'true' };
+  } catch {
+    return { muted: false };
+  }
+}
+
+export function incrementTotalPours(): void {
+  try {
+    const current = parseInt(localStorage.getItem(STORAGE_KEYS.TOTAL_POURS) || '0', 10);
+    localStorage.setItem(STORAGE_KEYS.TOTAL_POURS, String(current + 1));
+  } catch {}
+}
+
+export function getCoins(): number {
+  try {
+    const val = localStorage.getItem(STORAGE_KEYS.COINS);
+    return val ? parseInt(val, 10) : 12450;
+  } catch {
+    return 12450;
+  }
+}
+
+export function setCoins(coins: number): void {
+  try {
+    localStorage.setItem(STORAGE_KEYS.COINS, String(Math.max(0, coins)));
+  } catch {}
+}
+
+export function addCoins(amount: number): number {
+  const current = getCoins();
+  const next = current + amount;
+  setCoins(next);
+  return next;
+}
+
+export function spendCoins(amount: number): boolean {
+  const current = getCoins();
+  if (current >= amount) {
+    setCoins(current - amount);
+    return true;
+  }
+  return false;
+}
+
+export function getGems(): number {
+  try {
+    const val = localStorage.getItem(STORAGE_KEYS.GEMS);
+    return val ? parseInt(val, 10) : 320;
+  } catch {
+    return 320;
+  }
+}
+
+export function setGems(gems: number): void {
+  try {
+    localStorage.setItem(STORAGE_KEYS.GEMS, String(Math.max(0, gems)));
+  } catch {}
+}
+
+export function addGems(amount: number): number {
+  const current = getGems();
+  const next = current + amount;
+  setGems(next);
+  return next;
+}
+
+export function spendGems(amount: number): boolean {
+  const current = getGems();
+  if (current >= amount) {
+    setCoins(current - amount);
+    return true;
+  }
+  return false;
+}
+
+export function getUnlockedItems(): Set<string> {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.UNLOCKED_ITEMS);
+    return raw ? new Set(JSON.parse(raw)) : new Set(['bottle_cylinder', 'theme_lab']);
+  } catch {
+    return new Set(['bottle_cylinder', 'theme_lab']);
+  }
+}
+
+export function unlockItem(itemId: string): void {
+  try {
+    const current = getUnlockedItems();
+    current.add(itemId);
+    localStorage.setItem(STORAGE_KEYS.UNLOCKED_ITEMS, JSON.stringify(Array.from(current)));
+  } catch {}
+}
+
+/* ==========================================================================
+   5. BFS SOLVER & HINT ENGINE
+   ========================================================================== */
+
+export function serializeTubes(tubes: ColorId[][]): string {
+  return tubes.map((t) => t.join(',')).join('|');
+}
+
+export function isLevelSolved(tubes: ColorId[][], capacity: number = 4): boolean {
+  for (const tube of tubes) {
+    if (tube.length === 0) continue;
+    if (tube.length !== capacity) return false;
+    const first = tube[0];
+    if (!tube.every((c) => c === first)) return false;
+  }
+  return true;
+}
+
+export interface ValidMove {
+  fromIndex: number;
+  toIndex: number;
+  color: ColorId;
+  count: number;
+}
+
+export function getPossibleMoves(tubes: ColorId[][]
